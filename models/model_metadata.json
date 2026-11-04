@@ -1,0 +1,71 @@
+{
+    "project": "Digital Wallet Fraud Detection",
+    "dataset": "PaySim",
+    "dataset_context": "Nepal digital-wallet use case (simulation)",
+    "models": {
+        "random_forest": {
+            "file": "random_forest.joblib",
+            "threshold": 0.947018,
+            "threshold_selection": "Maximum F1 on validation data",
+            "test_average_precision": 0.98423,
+            "test_roc_auc": 0.999755
+        },
+        "autoencoder_ae3": {
+            "file": "autoencoder_ae3.keras",
+            "threshold": 0.4312098,
+            "threshold_selection": "Maximum F1 on validation data",
+            "test_average_precision": 0.50401,
+            "test_roc_auc": 0.905171
+        }
+    },
+    "preprocessing": {
+        "encoder_file": "onehot_encoder.joblib",
+        "scaler_file": "standard_scaler.joblib",
+        "feature_columns": [
+            "type",
+            "amount",
+            "oldbalanceOrg",
+            "newbalanceOrig",
+            "oldbalanceDest",
+            "newbalanceDest",
+            "balance_change_orig",
+            "balance_change_dest"
+        ],
+        "encoded_feature_order": [
+            "type_CASH_IN",
+            "type_CASH_OUT",
+            "type_DEBIT",
+            "type_PAYMENT",
+            "type_TRANSFER",
+            "amount",
+            "oldbalanceOrg",
+            "newbalanceOrig",
+            "oldbalanceDest",
+            "newbalanceDest",
+            "balance_change_orig",
+            "balance_change_dest"
+        ],
+        "numeric_feature_indices": [
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+        ],
+        "onehot_feature_indices": [
+            0,
+            1,
+            2,
+            3,
+            4
+        ]
+    },
+    "input_shape": 12,
+    "versions": {
+        "tensorflow": "2.22.0-rc0",
+        "scikit_learn": "1.9.0",
+        "numpy": "2.4.5"
+    }
+}
