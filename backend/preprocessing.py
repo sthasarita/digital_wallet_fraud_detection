@@ -1,26 +1,24 @@
+
 import numpy as np
 import pandas as pd
-#Feature configuration
-NUMERIC_FEATURES = [
-    "amount",
-    "oldbalanceOrg",
-    "newbalanceOrig",
-    "oldbalanceDest",
-    "newbalanceDest",
-    "balance_change_orig",
-    "balance_change_dest"
-]
 
-EXPECTED_TRANSACTION_TYPES = {
-    "CASH_IN",
-    "CASH_OUT",
-    "DEBIT",
-    "PAYMENT",
-    "TRANSFER"
-}
 
-#validate transaction input
-def validate_transactions(transaction):
+def preprocess_transaction(transaction, encoder, scaler):
+    """
+    Preprocess one transaction for the Random Forest and Autoencoder AE3.
+
+    Random Forest:
+        5 one-hot encoded features + 7 raw numerical features
+
+    Autoencoder AE3:
+        5 one-hot encoded features + 7 standardized numerical features
+
+    Returns:
+        rf_input: Input for Random Forest, shape (1, 12)
+        ae_input: Input for Autoencoder AE3, shape (1, 12)
+    """
+
+    # 1. Define the required transaction fields
     required_fields = [
         "type",
         "amount",
@@ -30,141 +28,101 @@ def validate_transactions(transaction):
         "newbalanceDest"
     ]
 
-    #check whether all required fields exist
-    missing_fields = [
-        field for field in required_fields
-        if field not in transaction
-    ]
+    # 2. Check whether all required fields are provided
+    for field in required_fields:
+        if field not in transaction:
+            raise ValueError(f"Missing required field: {field}")
 
-    if missing_fields:
-        raise ValueError(
-            f"Missing transaction fields:{missing_fields}"
-        )
-
-    #validate transaction type
+    # 3. Extract transaction type
     transaction_type = transaction["type"]
 
-    if transaction_type not in EXPECTED_TRANSACTION_TYPES:
-        raise ValueError(
-            f"Unsupported transaction type:{transaction_type}"
-        )
+    if not isinstance(transaction_type, str) or not transaction_type.strip():
+        raise ValueError("Transaction type must be a non-empty string.")
 
-    #validate numerical values
-    numerical_values = {}
-    for field in required_fields[1:]:
+    # 4. Extract and validate numerical features
+    numerical_fields = [
+        "amount",
+        "oldbalanceOrg",
+        "newbalanceOrig",
+        "oldbalanceDest",
+        "newbalanceDest"
+    ]
+
+    numerical_values = []
+
+    for field in numerical_fields:
         try:
             value = float(transaction[field])
         except (TypeError, ValueError):
-            raise ValueError(
-                f"{field} must be a valid number."
-            )
+            raise ValueError(f"{field} must be a valid number.")
 
         if not np.isfinite(value):
-            raise ValueError(
-                f"{field} must be finite."
-            )
+            raise ValueError(f"{field} must be finite.")
 
         if value < 0:
-            raise ValueError(
-                f"{field} cann't be negative."
-            )
-        numerical_values[field] = value
-    return transaction_type, numerical_values
+            raise ValueError(f"{field} cannot be negative.")
 
-#feature engineering
-def engineer_feature(transaction):
-    transaction_type, values = validate_transactions(
-        transaction
-    )
+        numerical_values.append(value)
 
-    #calculate balance changes
-    balance_change_orig = (
-        values["oldbalanceOrg"] - values["newbalanceOrig"]
+    (
+        amount,
+        oldbalanceOrg,
+        newbalanceOrig,
+        oldbalanceDest,
+        newbalanceDest
+    ) = numerical_values
 
-    )
+    # 5. Check whether transaction type was present during training
+    known_types = encoder.categories_[0]
 
-    balance_change_dest = (
-        values["newbalanceDest"] - values["oldbalanceDest"]
-    )
+    if transaction_type not in known_types:
+        raise ValueError(
+            f"Unsupported transaction type: {transaction_type}"
+        )
 
-    #collect numerical features in training order
-    numerical_features = np.array([
-        values["amount"],
-        values["oldbalanceOrg"],
-        values["newbalanceOrig"],
-        values["oldbalanceDest"],
-        values["newbalanceDest"],
+    # 6. One-hot encode transaction type
+    type_df = pd.DataFrame({
+        "type": [transaction_type]
+    })
+
+    encoded_type = encoder.transform(type_df)
+
+    # Convert sparse output to a dense NumPy array if necessary
+    if hasattr(encoded_type, "toarray"):
+        encoded_type = encoded_type.toarray()
+
+    # 7. Calculate the two engineered numerical features
+    balance_change_orig = oldbalanceOrg - newbalanceOrig
+    balance_change_dest = newbalanceDest - oldbalanceDest
+
+    # 8. Arrange numerical features in the exact training order
+    numerical_features = np.array([[
+        amount,
+        oldbalanceOrg,
+        newbalanceOrig,
+        oldbalanceDest,
+        newbalanceDest,
         balance_change_orig,
         balance_change_dest
-    ], dtype = np.float64)
+    ]], dtype=np.float32)
 
-    return transaction_type, numerical_features
-
-#Apply training - time transformations
-def transform_numerical_features(numerical_features):
-    transformed = numerical_features.copy()
-
-    #log transformation for the first five features
-    transformed[:5] = np.log1p(transformed[:5])
-
-    #Signed log transformation for balance changes
-    transformed[5:] = (
-        np.sign(transformed[5:]) *np.log1p(np.abs(transformed[5:]))
-    )
-
-    return transformed.astype(np.float32)
-
-#convert transactions into model inputs
-
-def preprocess_transaction(
-        transaction,
-        encoder,
-        scaler
-):
-    #feature engineering
-    transaction_type , numerical_features = (
-        engineer_feature(transaction)
-    )
-
-    #apply logarithmic transformations
-    transformed_numerical = (
-        transform_numerical_features(
-            numerical_features
-        )
-    )
-
-    #One-hot encode transaction type
-    encoded_type = encoder.transform(
-    pd.DataFrame({"type": [transaction_type]})
-    )
-    encoded_type = np.asarray(
+    # 9. Combine 5 one-hot columns and 7 numerical columns
+    combined_features = np.hstack([
         encoded_type,
-        dtype = np.float32
-    )
+        numerical_features
+    ]).astype(np.float32)
 
-    #Combine encoded type and numerical features
-    combined_features = np.concatenate(
-        [
-            encoded_type,
-            transformed_numerical.reshape(1,-1)
-        ],
-        axis = 1
-    )
-
-    #confirm the expected 12-feature input
-    if combined_features.shape[1] != 12:
-        raise ValueError(
-            f"Expected 12 features, got "
-            f"{combined_features.shape[1]}"
-        )
-
-    #Random forest receives unscaled features
+    # 10. Random Forest receives the raw numerical values
     rf_input = combined_features.copy()
 
-    #AE3 receives scaled numerical features
+    # 11. Autoencoder receives standardized numerical values
     ae_input = combined_features.copy()
 
+    # Scale only columns 5 through 11
+    # Do not scale the first 5 one-hot encoded columns
+    # Do not apply log1p()
     ae_input[:, 5:] = scaler.transform(
-        combined_features[:,5:]
+        ae_input[:, 5:]
     )
+
     return rf_input, ae_input
